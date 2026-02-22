@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, date
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,20 @@ CARDIO_ACTIVITIES = {
     "walking",
 }
 
+TZ_SP = ZoneInfo("America/Sao_Paulo")
+
+NATIONAL_HOLIDAYS_2026 = {
+    date(2026, 1, 1),   # Confraternização Universal
+    date(2026, 4, 3),   # Paixão de Cristo
+    date(2026, 4, 21),  # Tiradentes
+    date(2026, 5, 1),   # Dia do Trabalho
+    date(2026, 9, 7),   # Independência do Brasil
+    date(2026, 10, 12), # Nossa Senhora Aparecida
+    date(2026, 11, 2),  # Finados
+    date(2026, 11, 15), # Proclamação da República
+    date(2026, 11, 20), # Consciência Negra
+    date(2026, 12, 25), # Natal
+}
 
 # =====================
 # Funções utilitárias
@@ -36,13 +51,13 @@ def load_json(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-def parse_iso_datetime(value: str) -> datetime:
+def parse_iso_datetime_to_sp_day(value: str) -> date:
     """
-    Converte string ISO (ex: '2026-02-19T22:23:00.000000Z') em datetime.
-    - O GymRats exporta em ISO com 'Z' (UTC). Python não lê 'Z' direto no fromisoformat,
-      então trocamos por '+00:00'.
+    Converte a string ISO em UTC (Z) para a data em America/Sao_Paulo.
     """
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    dt_utc = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    dt_sp = dt_utc.astimezone(TZ_SP)
+    return dt_sp.date()
 
 
 def parse_distance_km(value: Optional[str]) -> Optional[float]:
@@ -60,8 +75,17 @@ def parse_distance_km(value: Optional[str]) -> Optional[float]:
         return float(s)
     except ValueError:
         return None
+    
 
-
+def is_ignored_day(day: date) -> bool:
+    """
+    Retorna True se a data deve ser ignorada:
+    - fim de semana (sábado/domingo)
+    - feriado nacional 2026
+    """
+    is_weekend = day.weekday() >= 5  # 5 = sábado, 6 = domingo
+    is_holiday = day in NATIONAL_HOLIDAYS_2026
+    return is_weekend or is_holiday
 # ==========================
 # Extração: members (lookup)
 # ==========================
@@ -111,8 +135,13 @@ def extract_leaderboard_daily(data: Dict[str, Any], member_lookup: Dict[int, str
         if not (isinstance(occurred_at, str) and isinstance(account_id, int) and points is not None):
             continue
 
-        dt = parse_iso_datetime(occurred_at)
-        day = dt.date().isoformat()
+        day_date = parse_iso_datetime_to_sp_day(occurred_at)
+
+# regra: ignora fins de semana e feriados nacionais
+        if is_ignored_day(day_date):
+            continue
+
+        day = day_date.isoformat()
 
         try:
             pts = float(points)
