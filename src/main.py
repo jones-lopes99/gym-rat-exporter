@@ -1,4 +1,6 @@
 from __future__ import annotations
+from dotenv import load_dotenv
+import os
 
 import json
 from dataclasses import dataclass
@@ -11,6 +13,8 @@ import pandas as pd
 import re
 import argparse
 
+load_dotenv()
+print("GYMRATS_USER from env:", os.getenv("GYMRATS_USER"))
 # ============
 # Configurações
 # ============
@@ -374,7 +378,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--user",
         type=str,
-        required=True,
+        required=False,
         help="Seu nome exatamente como aparece no export (members.full_name).",
     )
 
@@ -599,6 +603,11 @@ def main(user: str, year: int, exports_dir: Path, out_dir: Path, verbose: bool) 
 if __name__ == "__main__":
     args = parse_args()
 
+if not args.user:
+    args.user = os.getenv("GYMRATS_USER")
+
+if not args.user:
+    parser.error("User not provided. Use --user or set GYMRATS_USER in .env.")
     # converte strings de path para Path
     exports_dir = Path(args.exports_dir)
     out_dir = Path(args.out_dir)
