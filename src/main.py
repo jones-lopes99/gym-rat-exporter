@@ -112,6 +112,32 @@ def find_my_account_id(member_lookup: Dict[int, str], my_name: str) -> Optional[
             return account_id
     return None
 
+def extract_winners_daily(df_leader: pd.DataFrame) -> pd.DataFrame:
+        """
+        Recebe o leaderboard diário (já filtrado por dias válidos) e retorna os vencedores por dia.
+        Se houver empate no 1º lugar, retorna múltiplas linhas para o mesmo dia e marca tie=True.
+        """
+        if df_leader.empty:
+            return df_leader
+
+        # menor rank = 1 (melhor posição)
+        top = df_leader[df_leader["rank"] == 1].copy()
+
+        # detecta empate: mais de 1 vencedor no mesmo dia
+        winners_count = top.groupby("date")["full_name"].transform("count")
+        top["tie"] = winners_count > 1
+
+        # renomeia para ficar “bonito”
+        top = top.rename(
+            columns={
+                "full_name": "winner_full_name",
+                "points_day": "winner_points_day",
+            }
+        )
+
+        # seleciona só o que interessa
+        top = top[["date", "winner_full_name", "winner_points_day", "tie"]].sort_values(["date", "winner_full_name"])
+        return top
 
 # ==========================
 # 1) Leaderboard diário
@@ -253,6 +279,9 @@ def main() -> None:
     # 1) Leaderboard diário
     df_leader = extract_leaderboard_daily(data, member_lookup)
     df_leader.to_csv(OUT_DIR / "leaderboard_daily.csv", index=False, encoding="utf-8")
+
+    df_winners = extract_winners_daily(df_leader)
+    df_winners.to_csv(OUT_DIR / "winners_daily.csv", index=False, encoding="utf-8")
 
     # 2) Meu cardio
     df_cardio = extract_my_cardio_sessions(data, member_lookup, my_account_id)
