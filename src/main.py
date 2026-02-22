@@ -138,6 +138,44 @@ def extract_winners_daily(df_leader: pd.DataFrame) -> pd.DataFrame:
         # seleciona só o que interessa
         top = top[["date", "winner_full_name", "winner_points_day", "tie"]].sort_values(["date", "winner_full_name"])
         return top
+def extract_champions_weekly(df_leader: pd.DataFrame) -> pd.DataFrame:
+    """
+    Campeão da semana = soma de points_day dentro da semana (segunda a domingo),
+    considerando apenas dias válidos (df_leader já vem filtrado).
+    week_start = data da segunda-feira daquela semana.
+    Se houver empate no topo, retorna múltiplas linhas e marca tie=True.
+    """
+    if df_leader.empty:
+        return df_leader
+
+    tmp = df_leader.copy()
+    tmp["date"] = pd.to_datetime(tmp["date"])
+
+    # week_start = segunda-feira da semana (ISO-like)
+    tmp["week_start"] = (tmp["date"] - pd.to_timedelta(tmp["date"].dt.weekday, unit="D")).dt.date
+
+    # soma de pontos por semana e membro
+    weekly = (
+        tmp.groupby(["week_start", "account_id", "full_name"], as_index=False)
+        .agg(champion_points_week=("points_day", "sum"))
+    )
+
+    # rank semanal (1 = maior pontuação)
+    weekly["rank_week"] = weekly.groupby("week_start")["champion_points_week"].rank(
+        method="dense", ascending=False
+    ).astype(int)
+
+    top = weekly[weekly["rank_week"] == 1].copy()
+
+    # empate: mais de 1 campeão na mesma semana
+    top["tie"] = top.groupby("week_start")["full_name"].transform("count") > 1
+
+    top = top.rename(columns={"full_name": "champion_full_name"})
+    top["champion_points_week"] = top["champion_points_week"].round(6)
+
+    return top[["week_start", "champion_full_name", "champion_points_week", "tie"]].sort_values(
+        ["week_start", "champion_full_name"]
+    )
 
 # ==========================
 # 1) Leaderboard diário
@@ -282,6 +320,9 @@ def main() -> None:
 
     df_winners = extract_winners_daily(df_leader)
     df_winners.to_csv(OUT_DIR / "winners_daily.csv", index=False, encoding="utf-8")
+    
+    df_champions_week = extract_champions_weekly(df_leader)
+    df_champions_week.to_csv(OUT_DIR / "champions_weekly.csv", index=False, encoding="utf-8")
 
     # 2) Meu cardio
     df_cardio = extract_my_cardio_sessions(data, member_lookup, my_account_id)
