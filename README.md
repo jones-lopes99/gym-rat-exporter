@@ -31,6 +31,10 @@ Automatizar a análise de desempenho do grupo e acompanhar evolução para corri
 - [ ] Relatório de cardio
 - [ ] Dashboard futuro
 
----
+## Como rodar
+
+```bash
+python run.py --verbose
+```
 
 Desenvolvido por João Pedro Lopes de Souza
