@@ -13,7 +13,7 @@ import pandas as pd
 # ============
 # Configurações
 # ============
-EXPORT_PATH = Path("exports/gym-rats_export-22-02-26.json")
+EXPORT_DIR = Path("exports")
 OUT_DIR = Path("out")
 
 # Aqui você define "quem é você" pelo seu nome no GymRats
@@ -239,6 +239,99 @@ def extract_my_cardio_progress(df_weekly: pd.DataFrame) -> pd.DataFrame:
         "best_week_km_so_far",
     ]]
 
+def list_export_files(export_dir: Path) -> List[Path]:
+    """
+    Lista todos os JSONs na pasta exports/ em ordem alfabética.
+    Dica: seus nomes têm data, então a ordem alfabética já ajuda.
+    """
+    return sorted(export_dir.glob("*.json"))
+
+def dedupe_cardio(df_cardio: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove duplicatas quando você junta vários exports semanais.
+    Prioridade:
+    - se workout_id existe: usa workout_id como chave
+    - senão: usa (date, start_time, activity, distance_km, duration_min)
+    """
+    if df_cardio.empty:
+        return df_cardio
+
+    df = df_cardio.copy()
+
+    # chave primária preferencial
+    has_workout = df["workout_id"].notna()
+
+    df_with = df[has_workout].drop_duplicates(subset=["workout_id"], keep="first")
+    df_without = df[~has_workout].drop_duplicates(
+        subset=["date", "start_time", "activity", "distance_km", "duration_min"],
+        keep="first",
+    )
+
+    out = pd.concat([df_with, df_without], ignore_index=True)
+    out = out.sort_values(["date", "activity"]).reset_index(drop=True)
+    return out
+
+def extract_checkins_raw(data: Dict[str, Any], member_lookup: Dict[int, str]) -> pd.DataFrame:
+    """
+    Extrai check-ins em formato raw (1 linha por check-in) para permitir deduplicação
+    antes de agregar por dia.
+    """
+    rows: List[Dict[str, Any]] = []
+
+    for ci in data.get("check_ins", []):
+        occurred_at = ci.get("occurred_at")
+        account_id = ci.get("account_id")
+        points = ci.get("points")
+
+        if not (isinstance(occurred_at, str) and isinstance(account_id, int) and points is not None):
+            continue
+
+        # dia em São Paulo
+        day_date = parse_iso_datetime_to_sp_day(occurred_at)
+
+        # regra: ignora dias inválidos
+        if is_ignored_day(day_date):
+            continue
+
+        try:
+            pts = float(points)
+        except (TypeError, ValueError):
+            continue
+
+        # chave composta para dedupe
+        # (account_id + occurred_at + points) costuma ser suficiente
+        dedupe_key = f"{account_id}|{occurred_at}|{pts}"
+
+        rows.append(
+            {
+                "date": day_date.isoformat(),
+                "occurred_at": occurred_at,
+                "account_id": account_id,
+                "full_name": member_lookup.get(account_id, f"account_{account_id}"),
+                "points": pts,
+                "dedupe_key": dedupe_key,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def leaderboard_from_raw_checkins(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """
+    Agrega raw check-ins (já deduplicados e filtrados) em leaderboard diário.
+    """
+    if df_raw.empty:
+        return df_raw
+
+    out = (
+        df_raw.groupby(["date", "account_id", "full_name"], as_index=False)
+        .agg(points_day=("points", "sum"))
+    )
+    out["rank"] = out.groupby("date")["points_day"].rank(method="dense", ascending=False).astype(int)
+    out = out.sort_values(["date", "rank", "full_name"])
+    out["points_day"] = out["points_day"].round(6)
+    return out
+
 # ==========================
 # 1) Leaderboard diário
 # ==========================
@@ -362,32 +455,52 @@ def extract_my_cardio_sessions(
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    if not EXPORT_PATH.exists():
-        raise SystemExit(f"Arquivo não encontrado: {EXPORT_PATH}")
+    if not EXPORT_DIR.exists():
+        raise SystemExit(f"Pasta não encontrada: {EXPORT_DIR}")
 
-    data = load_json(EXPORT_PATH)
+    files = list_export_files(EXPORT_DIR)
+    if not files:
+        raise SystemExit(f"Nenhum JSON encontrado em: {EXPORT_DIR}")
 
-    member_lookup = build_member_lookup(data)
+    raw_checkins_all = []
+    cardio_all = []
+
+    # Vamos assumir que a lista de members é consistente entre exports.
+    # Pegamos do primeiro arquivo para montar lookup e achar seu account_id.
+    first_data = load_json(files[0])
+    member_lookup = build_member_lookup(first_data)
+
     my_account_id = find_my_account_id(member_lookup, MY_FULL_NAME)
-
     if my_account_id is None:
         raise SystemExit(
             f"Não achei '{MY_FULL_NAME}' em members. "
-            "Abra o JSON e veja o seu full_name exato, ou defina my_account_id manualmente."
+            "Veja o full_name exato no export ou defina manualmente."
         )
 
-    # 1) Leaderboard diário
-    df_leader = extract_leaderboard_daily(data, member_lookup)
+    # Processa todos os exports
+    for p in files:
+        data = load_json(p)
+
+        # Se members mudar ao longo do tempo, você pode recomputar lookup por arquivo.
+        # Por enquanto, reaproveitamos o primeiro.
+        raw_checkins_all.append(extract_checkins_raw(data, member_lookup))
+        cardio_all.append(extract_my_cardio_sessions(data, member_lookup, my_account_id))
+
+    df_raw = pd.concat(raw_checkins_all, ignore_index=True)
+    if not df_raw.empty:
+        df_raw = df_raw.drop_duplicates(subset=["dedupe_key"], keep="first")
+
+    df_leader = leaderboard_from_raw_checkins(df_raw)
     df_leader.to_csv(OUT_DIR / "leaderboard_daily.csv", index=False, encoding="utf-8")
 
     df_winners = extract_winners_daily(df_leader)
     df_winners.to_csv(OUT_DIR / "winners_daily.csv", index=False, encoding="utf-8")
-    
+
     df_champions_week = extract_champions_weekly(df_leader)
     df_champions_week.to_csv(OUT_DIR / "champions_weekly.csv", index=False, encoding="utf-8")
 
-    # 2) Meu cardio
-    df_cardio = extract_my_cardio_sessions(data, member_lookup, my_account_id)
+    df_cardio = pd.concat(cardio_all, ignore_index=True)
+    df_cardio = dedupe_cardio(df_cardio)
     df_cardio.to_csv(OUT_DIR / "my_cardio_sessions.csv", index=False, encoding="utf-8")
 
     df_cardio_weekly = extract_my_cardio_weekly_km(df_cardio)
@@ -396,9 +509,8 @@ def main() -> None:
     df_progress = extract_my_cardio_progress(df_cardio_weekly)
     df_progress.to_csv(OUT_DIR / "my_cardio_progress.csv", index=False, encoding="utf-8")
 
-    print("OK! Gerados:")
-    print("-", OUT_DIR / "leaderboard_daily.csv")
-    print("-", OUT_DIR / "my_cardio_sessions.csv")
+    print(f"OK! Processados {len(files)} export(s). Saídas em: {OUT_DIR}/")
+
 
 
 if __name__ == "__main__":
