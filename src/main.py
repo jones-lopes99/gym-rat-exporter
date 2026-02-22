@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import re
 
 
 # ============
@@ -239,12 +240,23 @@ def extract_my_cardio_progress(df_weekly: pd.DataFrame) -> pd.DataFrame:
         "best_week_km_so_far",
     ]]
 
+EXPORT_FILENAME_PATTERN = re.compile(
+    r"^gym-rats_export-?\d{2}-\d{2}-\d{2}\.json$"
+)
+
 def list_export_files(export_dir: Path) -> List[Path]:
     """
-    Lista todos os JSONs na pasta exports/ em ordem alfabética.
-    Dica: seus nomes têm data, então a ordem alfabética já ajuda.
+    Lista apenas arquivos que seguem o padrão esperado de export.
     """
-    return sorted(export_dir.glob("*.json"))
+    valid_files = []
+
+    for p in export_dir.glob("*.json"):
+        if EXPORT_FILENAME_PATTERN.match(p.name):
+            valid_files.append(p)
+        else:
+            print(f"[IGNORADO] Nome inválido: {p.name}")
+
+    return sorted(valid_files)
 
 def dedupe_cardio(df_cardio: pd.DataFrame) -> pd.DataFrame:
     """
@@ -331,6 +343,26 @@ def leaderboard_from_raw_checkins(df_raw: pd.DataFrame) -> pd.DataFrame:
     out = out.sort_values(["date", "rank", "full_name"])
     out["points_day"] = out["points_day"].round(6)
     return out
+
+def write_run_manifest(
+    out_dir: Path,
+    files: List[Path],
+    df_leader: pd.DataFrame,
+    df_cardio: pd.DataFrame,
+) -> None:
+    """
+    Salva um arquivo com informações da execução.
+    """
+    manifest = {
+        "run_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "processed_files_count": len(files),
+        "processed_files": [f.name for f in files],
+        "leaderboard_rows": int(len(df_leader)),
+        "cardio_rows": int(len(df_cardio)),
+    }
+
+    with (out_dir / "run_manifest.json").open("w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
 
 # ==========================
 # 1) Leaderboard diário
@@ -511,7 +543,12 @@ def main() -> None:
 
     print(f"OK! Processados {len(files)} export(s). Saídas em: {OUT_DIR}/")
 
-
+    write_run_manifest(
+        OUT_DIR,
+        files,
+        df_leader,
+        df_cardio,
+    )
 
 if __name__ == "__main__":
     main()
