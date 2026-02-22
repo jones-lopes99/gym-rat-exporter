@@ -14,7 +14,7 @@ import re
 import argparse
 
 load_dotenv()
-print("GYMRATS_USER from env:", os.getenv("GYMRATS_USER"))
+# print("GYMRATS_USER from env:", os.getenv("GYMRATS_USER")) - validação de carregamento de variável
 # ============
 # Configurações
 # ============
