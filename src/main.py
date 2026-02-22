@@ -9,16 +9,15 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import re
-
+import argparse
 
 # ============
 # Configurações
 # ============
-EXPORT_DIR = Path("exports")
-OUT_DIR = Path("out")
+exports_dir = Path("exports")
+out_dir = Path("out")
 
-# Aqui você define "quem é você" pelo seu nome no GymRats
-MY_FULL_NAME = "Jones Maromba"  # ajuste se no app estiver diferente
+
 
 # Atividades que vamos considerar "cardio"
 CARDIO_ACTIVITIES = {
@@ -364,6 +363,50 @@ def write_run_manifest(
     with (out_dir / "run_manifest.json").open("w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
+def parse_args() -> argparse.Namespace:
+    """
+    Lê os argumentos do terminal e devolve um objeto com as configs.
+    """
+    parser = argparse.ArgumentParser(
+        description="Process GymRats Pro JSON exports and generate leaderboards + cardio reports."
+    )
+
+    parser.add_argument(
+        "--user",
+        type=str,
+        required=True,
+        help="Seu nome exatamente como aparece no export (members.full_name).",
+    )
+
+    parser.add_argument(
+        "--year",
+        type=int,
+        default=2026,
+        help="Ano de referência para feriados nacionais (por enquanto, foco em 2026).",
+    )
+
+    parser.add_argument(
+        "--exports-dir",
+        type=str,
+        default="exports",
+        help="Pasta onde ficam os JSONs exportados.",
+    )
+
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default="out",
+        help="Pasta onde os CSVs serão gerados.",
+    )
+
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Se ligado, mostra logs adicionais.",
+    )
+
+    return parser.parse_args()
+
 # ==========================
 # 1) Leaderboard diário
 # ==========================
@@ -484,15 +527,15 @@ def extract_my_cardio_sessions(
     return df
 
 
-def main() -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+def main(user: str, year: int, exports_dir: Path, out_dir: Path, verbose: bool) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    if not EXPORT_DIR.exists():
-        raise SystemExit(f"Pasta não encontrada: {EXPORT_DIR}")
+    if not exports_dir.exists():
+        raise SystemExit(f"Pasta não encontrada: {exports_dir}")
 
-    files = list_export_files(EXPORT_DIR)
+    files = list_export_files(exports_dir)
     if not files:
-        raise SystemExit(f"Nenhum JSON encontrado em: {EXPORT_DIR}")
+        raise SystemExit(f"Nenhum JSON encontrado em: {exports_dir}")
 
     raw_checkins_all = []
     cardio_all = []
@@ -502,10 +545,10 @@ def main() -> None:
     first_data = load_json(files[0])
     member_lookup = build_member_lookup(first_data)
 
-    my_account_id = find_my_account_id(member_lookup, MY_FULL_NAME)
+    my_account_id = find_my_account_id(member_lookup, user)
     if my_account_id is None:
         raise SystemExit(
-            f"Não achei '{MY_FULL_NAME}' em members. "
+            f"Não achei '{user}' em members. "
             "Veja o full_name exato no export ou defina manualmente."
         )
 
@@ -523,32 +566,48 @@ def main() -> None:
         df_raw = df_raw.drop_duplicates(subset=["dedupe_key"], keep="first")
 
     df_leader = leaderboard_from_raw_checkins(df_raw)
-    df_leader.to_csv(OUT_DIR / "leaderboard_daily.csv", index=False, encoding="utf-8")
+    df_leader.to_csv(out_dir / "leaderboard_daily.csv", index=False, encoding="utf-8")
 
     df_winners = extract_winners_daily(df_leader)
-    df_winners.to_csv(OUT_DIR / "winners_daily.csv", index=False, encoding="utf-8")
+    df_winners.to_csv(out_dir / "winners_daily.csv", index=False, encoding="utf-8")
 
     df_champions_week = extract_champions_weekly(df_leader)
-    df_champions_week.to_csv(OUT_DIR / "champions_weekly.csv", index=False, encoding="utf-8")
+    df_champions_week.to_csv(out_dir / "champions_weekly.csv", index=False, encoding="utf-8")
 
     df_cardio = pd.concat(cardio_all, ignore_index=True)
     df_cardio = dedupe_cardio(df_cardio)
-    df_cardio.to_csv(OUT_DIR / "my_cardio_sessions.csv", index=False, encoding="utf-8")
+    df_cardio.to_csv(out_dir / "my_cardio_sessions.csv", index=False, encoding="utf-8")
 
     df_cardio_weekly = extract_my_cardio_weekly_km(df_cardio)
-    df_cardio_weekly.to_csv(OUT_DIR / "my_cardio_weekly_km.csv", index=False, encoding="utf-8")
+    df_cardio_weekly.to_csv(out_dir / "my_cardio_weekly_km.csv", index=False, encoding="utf-8")
 
     df_progress = extract_my_cardio_progress(df_cardio_weekly)
-    df_progress.to_csv(OUT_DIR / "my_cardio_progress.csv", index=False, encoding="utf-8")
+    df_progress.to_csv(out_dir / "my_cardio_progress.csv", index=False, encoding="utf-8")
 
-    print(f"OK! Processados {len(files)} export(s). Saídas em: {OUT_DIR}/")
+    print(f"OK! Processados {len(files)} export(s). Saídas em: {out_dir}/")
 
     write_run_manifest(
-        OUT_DIR,
+        out_dir,
         files,
         df_leader,
         df_cardio,
     )
 
+    if verbose:
+        print(f"Processando {len(files)} arquivo(s) de: {exports_dir}")
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+
+    # converte strings de path para Path
+    exports_dir = Path(args.exports_dir)
+    out_dir = Path(args.out_dir)
+
+    # por enquanto, year é só informativo (foco 2026)
+    main(
+        user=args.user,
+        year=args.year,
+        exports_dir=exports_dir,
+        out_dir=out_dir,
+        verbose=args.verbose,
+    )
