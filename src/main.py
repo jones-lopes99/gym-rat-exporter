@@ -198,8 +198,8 @@ def extract_my_cardio_sessions(
         if not isinstance(occurred_at, str):
             continue
 
-        dt = parse_iso_datetime(occurred_at)
-        day = dt.date().isoformat()
+        day_date = parse_iso_datetime_to_sp_day(occurred_at)
+        day = day_date.isoformat()
 
         for act in ci.get("check_in_activities", []) or []:
             platform_activity = act.get("platform_activity")
