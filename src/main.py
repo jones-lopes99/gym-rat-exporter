@@ -177,6 +177,68 @@ def extract_champions_weekly(df_leader: pd.DataFrame) -> pd.DataFrame:
         ["week_start", "champion_full_name"]
     )
 
+def extract_my_cardio_weekly_km(df_cardio: pd.DataFrame) -> pd.DataFrame:
+    """
+    Soma a distância (km) por semana (segunda-feira como início).
+    """
+    if df_cardio.empty:
+        return df_cardio
+
+    tmp = df_cardio.copy()
+    tmp["date"] = pd.to_datetime(tmp["date"])
+
+    # remove linhas sem distância (NaN)
+    tmp = tmp.dropna(subset=["distance_km"])
+
+    # week_start = segunda-feira da semana
+    tmp["week_start"] = (tmp["date"] - pd.to_timedelta(tmp["date"].dt.weekday, unit="D")).dt.date
+
+    weekly = (
+        tmp.groupby("week_start", as_index=False)
+        .agg(
+            total_km=("distance_km", "sum"),
+            sessions=("distance_km", "count"),
+            total_minutes=("duration_min", "sum"),
+        )
+        .sort_values("week_start")
+    )
+
+    weekly["total_km"] = weekly["total_km"].round(2)
+
+    # total_minutes pode virar NaN se não houver duração em nenhuma linha
+    if "total_minutes" in weekly.columns:
+        weekly["total_minutes"] = weekly["total_minutes"].fillna(0).round(2)
+
+    # pace médio da semana (min/km) = total_min / total_km
+    weekly["avg_pace_min_per_km"] = (weekly["total_minutes"] / weekly["total_km"]).replace([pd.NA, float("inf")], pd.NA)
+    weekly["avg_pace_min_per_km"] = weekly["avg_pace_min_per_km"].round(2)
+
+    return weekly
+
+
+def extract_my_cardio_progress(df_weekly: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cria uma tabela de evolução:
+    - km acumulado
+    - melhor semana (maior km até o momento)
+    """
+    if df_weekly.empty:
+        return df_weekly
+
+    out = df_weekly.copy().sort_values("week_start")
+    out["cumulative_km"] = out["total_km"].cumsum().round(2)
+    out["best_week_km_so_far"] = out["total_km"].cummax().round(2)
+
+    return out[[
+        "week_start",
+        "total_km",
+        "sessions",
+        "total_minutes",
+        "avg_pace_min_per_km",
+        "cumulative_km",
+        "best_week_km_so_far",
+    ]]
+
 # ==========================
 # 1) Leaderboard diário
 # ==========================
@@ -327,6 +389,12 @@ def main() -> None:
     # 2) Meu cardio
     df_cardio = extract_my_cardio_sessions(data, member_lookup, my_account_id)
     df_cardio.to_csv(OUT_DIR / "my_cardio_sessions.csv", index=False, encoding="utf-8")
+
+    df_cardio_weekly = extract_my_cardio_weekly_km(df_cardio)
+    df_cardio_weekly.to_csv(OUT_DIR / "my_cardio_weekly_km.csv", index=False, encoding="utf-8")
+
+    df_progress = extract_my_cardio_progress(df_cardio_weekly)
+    df_progress.to_csv(OUT_DIR / "my_cardio_progress.csv", index=False, encoding="utf-8")
 
     print("OK! Gerados:")
     print("-", OUT_DIR / "leaderboard_daily.csv")
