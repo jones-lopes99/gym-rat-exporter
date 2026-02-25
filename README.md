@@ -1,4 +1,5 @@
 # 🏋️ GymRats Exporter
+[![tests](https://github.com/jones-lopes99/gym-rat-exporter/actions/workflows/tests.yml/badge.svg)](https://github.com/jones-lopes99/gym-rat-exporter/actions/workflows/tests.yml)
 
 Projeto em Python para processar exportações JSON do GymRats Pro e gerar:
 
