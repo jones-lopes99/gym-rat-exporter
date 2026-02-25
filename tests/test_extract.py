@@ -8,7 +8,7 @@ from src.extract import (
 
 
 def test_parse_distance_km_with_comma():
-    assert parse_distance_km("5,5") == 5.5
+    assert parse_distance_km("5,5") == 5.5 j
 
 
 def test_parse_distance_km_with_dot():
